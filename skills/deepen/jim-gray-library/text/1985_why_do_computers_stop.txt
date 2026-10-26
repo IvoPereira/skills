@@ -1,0 +1,492 @@
+    Why Do Computers Stop and What Can Be Done About It?
+                                                                Jim Gray
+                                                            Tandem Computers
+                                                    Technical Report 85.7*, June 1985, PN87614
+
+
+
+Abstract                                                                          +
+                                                                                      Minutes
+                                                                                      0         Problem occurs
+An analysis of the failure statistics of a commercially                               3         Operator decides problem needs dump/restart
+available fault-tolerant system shows that administration                         +   8         Operator completes dump
+                                                                                      12        OS restart complete, start DB/DC restart
+and software are the major contributors to failure. Various                       +   17        DB restart complete (assume no tape handling)
+approaches to software fault tolerance are then discussed                         +   30        Network restart continuing
+notably process-pairs, transactions and reliable storage. It                      +   40        Network restart continuing
+is pointed out that faults in production software are of-                         +   50        Network restart continuing
+                                                                                  +   60        Network restart continuing
+ten soft (transient) and that a transaction mechanism com-                        +   70        DC restart complete, begin user restart
+bined with persistent process-pairs provides fault-tolerant                       +   80
+execution – the key to software fault-tolerance12 .                               +   90        User restart complete
+
+                                                                                 Table 1: A time line showing how a simple fault mush-
+1     Introduction                                                               rooms into a 90 minute system outage.
+Computer applications such as patient monitoring, pro-
+cess control, online transaction processing, and electronic                      outage every ten days is unacceptable. Especially since
+mail require high availability.                                                  outages usually come at times of peak demand [Mourad].
+   The anatomy of a typical large system failure is inter-                          These applications require systems which virtually
+esting: Assuming, as is usually the case, that an opera-                         never fail – parts of the system may fail but the rest of
+tions or software fault caused the outage, Table 1 shows a                       the system must tolerate failures and continue delivering
+time line of the outage. It takes a few minutes for some-                        service. This paper reports on the structure and success
+one to realize that there is a problem and that a restart                        of such a system – the Tandem NonStop system. It has
+is the only obvious solution. It takes the operator about                        MTBF measured in years – more than two orders of mag-
+5 minutes to snapshot the system state for later analysis.                       nitude better than conventional designs.
+Then the restart can begin. For a large system, the op-
+erating system takes a few minutes to get started. Then
+                                                                                 Hardware Availability by Modular
+the database and data communications systems begin their                         Redundancy
+restart. The database restart completes within a few min-                        Reliability and availability are different: Availability is
+utes but it may take an hour to restart a large terminal                         doing the right thing within the specified response time.
+network. Once the network is up, the users take a while                          Reliability is not doing the wrong thing.
+to refocus on the tasks they had been performing. After                            Expected reliability is proportional to the Mean Time
+restart, much work has been saved for the system to per-                         Between Failures (MTBF). A failure has some Mean Time
+form – so the transient load presented at restart is the peak                    To Repair (MTTR). Availability can be expressed as a
+load. This affects system sizing.                                                probability that the system will be available:
+   Conventional well-managed transaction processing
+systems fail about once every two weeks [Mourad], [Bur-                                                             M T BF
+                                                                                          Availability =                                        (1)
+man]. The ninety minute outage outlined above translates                                                       M T BF + M T T R
+to 99.6% availability for such systems. 99.6% availability                          In distributed systems, some parts may be available
+“sounds” wonderful, but hospital patients, steel mills, and                      while others are not. In these situations, one weights the
+electronic mail users do not share this view – a 1.5 hour                        availability of all the devices (e.g. if 90% of the database
+ * This paper has been re-typeset by Remzi Arpaci-Dusseau, so as to              is available to 90% of the terminals, then the system is
+make it more readable. Apologies for any errors in transcription.                .9x.9 = 81% available.)
+    1 This paper is not an “official” Tandem statement on fault-tolerance.
+                                                                                    The key to providing high availability is to modular-
+Rather, it expresses the author’s research on the topic.
+    2 An early version of this paper appeared in the proceedings of the          ize the system so that modules are the unit of failure and
+German Association for Computing Machinery Conference on Office                  replacement. Spare modules are configured to give the ap-
+Automation, Erlangen, Oct. 2–4, 1985.                                            pearance of instantaneous repair if MTTR is tiny, then the
+
+
+                                                                             1
+failure is “seen” as a delay rather than a failure. For ex-            • Design the modules to have MTBF in excess of a
+ample, geographically distributed terminal networks fre-                 year.
+quently have one terminal in a hundred broken. Hence,                  • Make each module fail-fast – either it does the right
+the system is limited to 99% availability (because termi-                thing or stops.
+nal availability is 99%). Since terminal and communi-                  • Detect module faults promptly by having the module
+cations line failures are largely independent, one can pro-              signal failure or by requiring it to periodically send
+vide very good “site” availability by placing two terminals              an I AM ALIVE message or reset a watchdog timer.
+with two communications lines at each site. In essence,                • Configure extra modules which can pick up the load
+the second ATM provides instantaneous repair and hence                   of failed modules. Takeover time, including the de-
+very high availability. Moreover, they increase transaction              tection of the module failure, should be seconds.
+throughput at locations with heavy traffic. This approach                This gives an apparent module MTBF measured in
+is taken by several high availability Automated Teller Ma-               millennia.
+chine (ATM) networks.
+   This example demonstrates the concept: modularity                   The resulting systems have hardware MTBF measured
+and redundancy allows one module of the system to fail              in decades or centuries.
+without affecting the availability of the system as a whole            This gives fault-tolerant hardware. Unfortunately, it
+because redundancy leads to small MTTR. This combina-               says nothing about tolerating the major sources of failure:
+tion of modularity and redundancy is the key to providing           software and operations. Later we show how these same
+continuous service even if some components fail.                    ideas can be applied to gain software fault-tolerance.
+   Von Neumann was the first to analytically study the
+use of redundancy to construct available (highly reliable)
+                                                                    An Analysis of Failures of a
+systems from unreliable components [von Neumann]. In                Fault-Tolerant System
+his model, a redundancy 20,000 was needed to get a sys-             There have been many studies of why computer systems
+tem MTBF of 100 years. Certainly, his components were               fail. To my knowledge, none have focused on a commer-
+less reliable than transistors, he was thinking of human            cial fault-tolerant system. The statistics for fault-tolerant
+neurons or vacuum tubes. Still, it is not obvious why               systems are quite a bit different from those for conven-
+von Neumann’s machines required a redundancy factor of              tional mainframes [Mourad]. Briefly, the MTBF of hard-
+20,000 while current electronic systems use a factor of 2           ware, software and operations is more than 500 times
+to achieve very high availability. The key difference is that       higher than those reported for conventional computing
+von Neumann’s model lacked modularity, a failure in any             systems fault-tolerance works. On the other hand, the ra-
+bundle of wires anywhere, implied a total system failure.           tios among the sources of failure are about the same as
+   Von Neumann’s model had redundancy without mod-                  those for conventional systems. Administration and soft-
+ularity. In contrast, modern computer systems are con-              ware dominate, hardware and environment are minor con-
+structed in a modular fashion – a failure within a module           tributors to total system outages.
+only affects that module. In addition each module is con-              Tandem Computers Inc. makes a line of fault-tolerant
+structed to be fail-fast – the module either functions prop-        systems [Bartlett] [Borr 81, 84]. I analyzed the causes of
+erly or stops [Schlichting]. Combining redundancy with              system failures reported to Tandem over a seven month
+modularity allows one to use a redundancy of two rather             period. The sample set covered more than 2000 systems
+than 20,000. Quite an economy!                                      and represents over 10,000,000 system hours or over 1300
+   To give an example, modern discs are rated for an                system years. Based on interviews with a sample of cus-
+MTBF above 10,000 hours – a hard fault once a year.                 tomers, I believe these reports cover about 50% of all to-
+Many systems duplex pairs of such discs, storing the                tal system failures. There is under-reporting of failures
+same information on both of them, and using indepen-                caused by customers or by environment. Almost all fail-
+dent paths and controllers for the discs. Postulating a very        ures caused by the vendor are reported.
+leisurely MTTR of 24 hours and assuming independent                    During the measured period, 166 failures were reported
+failure modes, the MTBF of this pair (the mean time to              including one fire and one flood. Overall, this gives a sys-
+a double failure within a 24 hour window) is over 1000              tem MTBF of 1.8 years reported and 3.8 years MTBF if
+years. In practice, failures are not quite independent, but         the systematic under-reporting is taken into consideration.
+the MTTR is less than 24 hours and so one observes such             This is still well above the 1 week MTBF typical 7 of con-
+high availability.                                                  ventional designs.
+   Generalizing this discussion, fault-tolerant hardware               By interviewing four large customers who keep careful
+can be constructed as follows:                                      books on system outages, I got a more accurate picture of
+                                                                    their operation. They averaged a 4 year MTBF (consis-
+   • Hierarchically decompose the system into modules.              tent with 7.8 years with 50% reporting). In addition, their
+
+
+                                                                2
+failure statistics had under-reporting in the expected areas        System Failure Mode   Probability   MTBF
+                                                                    Administration              42%     31 years
+of environment and operations. Rather than skew the data             Maintenance                25%
+by multiplying all MTBF numbers by .5, I will present the            Operations               9% (?)
+analysis as though the reports were accurate.                        Configuration               8%
+   About one third of the failures were “infant mortality”
+                                                                    Software                   25%      50 years
+failures – a product having a recurring problem. All these           Application              4% (?)
+fault clusters are related to a new software or hardware             Vendor                    21%
+product still having the bugs shaken out. If one subtracts
+                                                                    Hardware                    18%     73 years
+out systems having “infant” failures or non-duplexed-disc            Central                     1%
+failures, then the remaining failures, 107 in all, make an           Disc                        7%
+interesting analysis (see table 1).                                  Tape                        2%
+   First, the system MTBF rises from 7.8 years to over 11            Comm Controllers            6%
+                                                                     Power supply                2%
+years.
+   System administration, which includes operator ac-               Environment                14%      87 years
+tions, system configuration, and system maintenance was              Power                    9% (?)
+                                                                     Communications             3%
+the main source of failures – 42%. Software and hard-                Facilities                 2%
+ware maintenance was the largest category. High avail-
+ability systems allow users to add software and hardware            Unknown                      3%
+and to do preventative maintenance while the system is
+                                                                    Total                      103%     11 years
+operating. By and large, online maintenance works VERY
+well. It extends system availability by two orders of mag-         Table 2: A time line showing how a simple fault mush-
+nitude. But occasionally, once every 52 years by my fig-           rooms into a 90 minute system outage.
+ures, something goes wrong. This number is somewhat
+speculative if a system failed while it was undergoing on-         backup power (North American urban power typically has
+line maintenance or while hardware or software was being           a 2 month MTBF). Tandem systems tolerate over 4 hours
+added, I ascribed the failure to maintenance. Sometimes            of lost power without losing any data or communications
+it was clear that the maintenance person typed the wrong           state (the MTTR is almost zero), so customers do not gen-
+command or unplugged the wrong module, thereby intro-              erally report minor power outages (less than 1 hour) to us.
+ducing a double failure. Usually, the evidence was cir-               Given that power outages are under-reported, the small-
+cumstantial. The notion that mere humans make a single             est contributor to system outages was hardware, mostly
+critical mistake every few decades amazed me – clearly             discs and communications controllers. The measured set
+these people are very careful and the design tolerates some        included over 20,000 discs over 100,000,000 disc hours.
+human faults.                                                      We saw 19 duplexed disc failures, but if one subtracts out
+   System operators were a second source of human fail-            the infant mortality failures then there were only 7 du-
+ures. I suspect under-reporting of these failures. If a sys-       plexed disc failures. In either case, one gets an MTBF in
+tem fails because of the operator, he is less likely to tell       excess of 5 million hours for the duplexed pair and their
+us about it. Even so, operators reported several failures.         controllers. This approximates the 1000 year MTBF cal-
+System configuration, getting the right collection of soft-        culated in the earlier section.
+ware, microcode, and hardware, is a third major headache
+for reliable system administration.                                Implications of the Analysis of MTBF
+   Software faults were a major source of system outages           The implications of these statistics are clear: the key to
+– 25% in all. Tandem supplies about 4 million lines of             high availability is tolerating operations and software
+code to the customer. Despite careful efforts, bugs are            faults.
+present in this software. In addition, customers write quite          Commercial fault-tolerant systems are measured to
+a bit of software. Application software faults are probably        have a 73 year hardware MTBF (table 1). I believe there
+under-reported here. I guess that only 30% are reported.           was 75% reporting of outages caused by hardware. Calcu-
+If that is true, application programs contribute 12% to out-       lating from device MTBF, there were about 50,000 hard-
+ages and software rises to 30% of the total.                       ware faults in the sample set. Less than one in a thousand
+   Next come environmental failures. Total communica-              resulted in a double failure or an interruption of service.
+tions failures (losing all lines to the local exchange) hap-       Hardware fault-tolerance works!
+pened three times, in addition, there was a fire and a                In the future, hardware will be even more reliable due to
+flood. No outages caused by cooling or air condition-              better design, increased levels of integration, and reduced
+ing were reported. Power outages are a major source of             numbers of connectors.
+failures among customers who do not have emergency                    By contrast, the trend for software and system admin-
+
+
+                                                               3
+istration IS not positive. Systems are getting more com-            the study recommends waiting for a major software re-
+plex. In this study, administrators reported 41 critical mis-       lease, and carefully testing it In the target environment
+takes in over 1300 years of operation. This gives an oper-          prior to installation. Adams comes to similar conclusions
+ations MTBF of 31 years! operators certainly made many              [Adams], he points out that for most bugs, the chance of
+more mistakes, but most were not fatal. administrators are          “rediscovery” is very slim indeed.
+clearly very careful and use good practices.                           The statistics also suggest that if availability is a ma-
+   The top priority for improving system availability is to         jor goal, then avoid products which are immature and still
+reduce administrative mistakes by making self-configured            suffering infant mortality. It is fine to be on the leading
+systems with minimal maintenance and minimal operator               edge of technology, but avoid the bleeding edge of tech-
+interaction. Interfaces that ask the operator for informa-          nology.
+tion or ask him to perform some function must be simple,               The last implication of the statistics is that software
+consistent and operator fault-tolerant.                             fault-tolerance is important. Software fault-tolerance is
+   The same discussion applies to system maintenance.               the topic of the rest of the paper.
+Maintenance interfaces must be simplified. Installation of
+new equipment must have fault-tolerant procedures and
+                                                                    Fault-tolerant Execution
+the maintenance interfaces must simplified or eliminated.           Based on the analysis above, software accounts for over
+To give a concrete example, Tandem’s newest discs have              25% of system outages. This is quite good – a MTBF of
+no special customer engineering training (installation is           50 years! The volume of Tandem’s software is 4 million
+“obvious”) and they have no scheduled maintenance.                  lines and growing at about 20% per year. Work continues
+   A secondary implication of the statistics is actually a          on improving coding practices and code testing but there
+contradiction:                                                      is little hope of getting ALL the bugs out of all the soft-
+                                                                    ware. Conservatively, I guess one bug per thousand lines
+   • New and changing systems have higher failure rates.            of code remains after a program goes through design re-
+     Infant products contributed one third of all outages.          views, quality assurance, and beta testing. That suggests
+     Maintenance caused one third of the remaining out-             the system has several thousand bugs. But somehow, these
+     ages. A way to improve availability is to install              bugs cause very few system failures because the system
+     proven hardware and software, and then leave it                tolerates software faults.
+     alone. As the adage says, “If it’s not broken, don’t              The keys to this software fault-tolerance are:
+     fix it”.                                                          • Software modularity through processes and mes-
+   • On the other hand, a Tandem study found that a high                 sages.
+     percentage of outages were caused by “known” hard-                • Fault containment through fail-fast software mod-
+     ware or software bugs, which had fixes available, but               ules.
+     the fixes were not yet installed in the failing system.
+                                                                       • Process-pairs to tolerate hardware and transient soft-
+     This suggests that one should install software and
+                                                                         ware faults.
+     hardware fixes as soon as possible.
+                                                                       • Transaction mechanism to provide data and message
+                                                                         integrity.
+   There is a contradiction here: never change it and
+                                                                       • Transaction mechanism combined with process-
+change it ASAP! By consensus, the risk of change is too
+                                                                         pairs to ease exception handling and tolerate soft-
+great. Most installations are slow to install changes, they
+                                                                         ware faults.
+rely on fault-tolerance to protect them until the next major
+release. After all, it worked yesterday, so it will probably          This section expands on each of these points.
+work tomorrow.
+   Here one must separate software and hardware mainte-             Software modularity through
+nance. Software fixes outnumber hardware fixes by sev-              processes and messages
+eral orders of magnitude. I believe this causes the differ-         As with hardware, the key to software fault-tolerance 1S
+ence in strategy between hardware and software mainte-              to hierarchically decompose large systems into modules,
+nance. One cannot forego hardware preventative mainte-              each module being a unit of service and a unit of failure.
+nance – our studies show that it may be good in the short           A failure of a module does not propagate beyond the mod-
+term but it is disastrous in the long term. One must in-            ule.
+stall hardware fixes in a timely fashion. If possible, pre-            There is considerable controversy about how to modu-
+ventative maintenance should be scheduled to minimize               larize software. Starting with Burroughs’ Esbol and con-
+the impact of a possible mistake. Software appears to be            tinuing through languages like Mesa and Ada, compiler
+different. The same study recommends installing a soft-             writers have assumed perfect hardware and contended
+ware fix only if the bug IS causing outages. Otherwise,             that they can provide good fault isolation through static
+
+
+                                                                4
+compile-time type checking. In contrast, operating sys-              the environment is slightly different. After all, it worked
+tems designers have advocated run-time checking com-                 a minute ago!
+bined with the process as the unit of protection and fail-              The assertion that most production software bugs are
+ure.                                                                 soft Heisenbugs that go away when you look at them is
+   Although compiler checking and exception handling                 well known to systems programmers. Bohrbugs, like the
+provided by programming languages are real assets, his-              Bohr atom, are solid, easily detected by standard tech-
+tory seems to have favored the run-time checks plus the              niques, and hence boring. But Heisenbugs may elude
+process approach to fault containment. It has the virtue             a bug-catcher for years of execution. Indeed, the bug-
+of simplicity – if a process or its processor misbehaves,            catcher may perturb the situation just enough to make the
+stop it. The process provides a clean unit of modularity,            Heisenbug disappear. This is analogous to the Heisenberg
+service, fault containment, and failure.                             Uncertainty Principle in Physics.
+                                                                        I have tried to quantify the chances of tolerating a
+Fault containment through fail-fast                                  Heisenbug by re-execution. This is difficult. A poll yields
+software modules                                                     nothing quantitative. The one experiment I did went as
+The process approach to fault isolation advocates that the           follows: The spooler error log of several dozen systems
+process software module be fail-fast, it should either func-         was examined. The spooler is constructed as a collection
+tion correctly or it should detect the fault, signal failure         of fail-fast processes. When one of the processes detects
+and stop operating.                                                  a fault, it stops and lets its brother continue the operation.
+   Processes are made fail-fast by defensive program-                The brother does a software retry. If the brother also fails,
+ming. They check all their inputs, intermediate results,             then the bug is a Bohrbug rather than a Heisenbug. In
+outputs and data structures as a matter of course. If any            the measured period, one out of 132 software faults was a
+error is detected, they signal a failure and stop. In the ter-       Bohrbug, the remainder were Heisenbugs.
+minology of [Cristian], fail-fast software has small fault              A related study IS reported in [Mourad]. In MVS/XA
+detection latency.                                                   functional recovery routines try to recover from software
+   The process achieves fault containment by sharing no              and hardware faults. If a software fault is recoverable, it
+state with other processes; rather, its only contact with            is a Heisenbug. In that study, about 90% of the software
+other processes is via messages carried by a kernel mes-             faults In system software had functional recovery routines
+sage system.                                                         (FRRs). Those routines had a 76% success rate in con-
+                                                                     tinuing system execution. That is, MVS FRRs extend the
+Software faults are soft:                                            system software MTBF by a factor of 4.
+the Bohrbug/Heisenbug hypothesis                                        It would be nice to quantify this phenomenon further.
+Before developing the next step in fault-tolerance,                  As it is, systems designers know from experience that they
+process-pairs, we need to have a software failure model.             can exploit the Heisenbug hypothesis to improve software
+It is well known that most hardware faults are soft that is,         fault-tolerance.
+most hardware faults are transient. Memory error correc-
+tion and checksums plus retransmission for communica-                Process-pairs for fault-tolerant execution
+tion are standard ways of dealing with transient hardware            One might think that fail-fast modules would produce a
+faults. These techniques are variously estimated to boost            reliable but unavailable system – modules are stopping all
+hardware MTBF by a factor of 5 to 100.                               the time. But, as with fault-tolerant hardware, configur-
+   I conjecture that there is a similar phenomenon in soft-          ing extra software modules gives a MTTR of millisec-
+ware – most production software faults are soft. If the              onds in case a process fails due to hardware failure or a
+program state is reinitialized and the failed operation re-          software Heisenbug. If modules have a MTBF of a year,
+tried, the operation will usually not fail the second time.          then dual processes give very acceptable MTBF for the
+   If you consider an industrial software system which has           pair. Process triples do not improve MTBF because other
+gone through structured design, design reviews, quality              parts of the system (e.g., operators) have orders of magni-
+assurance, alpha test, beta test, and months or years of             tude worse MTBF. So, in practice fault-tolerant processes
+production, then most of the “hard” software bugs, ones              are generically called process-pairs. There are several ap-
+that always fail on retry, are gone. The residual bugs are           proaches to designing process-pairs:
+rare cases, typically related to strange hardware condi-
+tions (rare or transient device fault), limit conditions (out           • Lockstep: In this design, the primary and backup
+of storage, counter overflow, lost interrupt, etc,), or race              processes synchronously execute the same instruc-
+conditions (forgetting to request a semaphore).                           tion stream on independent processors [Kim]. If one
+   In these cases, resetting the program to a quiescent state             of the processors fails, the other simply continues the
+and re-executing it will quite likely work, because now                   computation. This approach gives good tolerance to
+
+
+                                                                 5
+  hardware failures but gives no tolerance of Heisen-                  way to resynchronize these processes to have a com-
+  bugs. Both streams will execute any programming                      mon state. As explained below, transactions provide
+  bug in lockstep and will fail in exactly the same way.               such a resynchronization mechanism.
+• State Checkpointing: In this scheme, communica-
+  tion sessions are used to connect a requester to a                Summarizing the pros and cons of these approaches:
+  process-pair. The primary process in a pair does
+  the computation and sends state changes and reply                  • Lockstep processes don’t tolerate Heisenbugs.
+  messages to its backup prior each major event. If                  • State checkpoints give fault-tolerance but are hard to
+  the primary process stops, the session switches to                   program.
+  the backup process which continues the conversation                • Automatic checkpoints seem to be inefficient – they
+  with the requester. Session sequence numbers are                     send a lot of data to the backup.
+  used to detect duplicate and lost messages, and to re-             • Delta checkpoints have good performance but are
+  send the reply if a duplicate request arrives [Bartlett].            hard to program.
+  Experience shows that checkpointing process-pairs                  • Persistent processes lose state in case of failure.
+  give excellent fault-tolerance (see table 1), but that
+  programming checkpoints is difficult. The trend is                 We argue next that transactions combined with persis-
+  away from this approach and towards the Delta or                tent processes are simple to program and give excellent
+  Persistent approaches described below.                          fault-tolerance.
+• Automatic Checkpointing: This scheme is much
+  like state checkpoints except that the kernel auto-             Transactions for data integrity
+  matically manages the checkpointing, relieving the              A transaction is a group of operations, be they database
+  programmer of this chore. As described in [Borg],               updates, messages, or external actions of the computer,
+  all messages to and from a process are saved by the             which form a consistent transformation of the state.
+  message kernel for the backup process. At takeover,               Transactions should have the ACID property [Haeder]:
+  these messages are replayed to the backup to roll it               • Atomicity: Either all or none of the actions of the
+  forward to the primary process’ state. When substan-                 transaction should “happen”. Either it commits or
+  tial computation or storage is required in the backup,               aborts.
+  the primary state is copied to the backup so that
+                                                                     • Consistency: Each transaction should see a correct
+  the message log and replay can be discarded. This
+                                                                       picture of the state, even if concurrent transactions
+  scheme seems to send more data than the state check-
+                                                                       are updating the state.
+  pointing scheme and hence seems to have high exe-
+                                                                     • Integrity: The transaction should be a correct state
+  cution cost.
+                                                                       transformation.
+• Delta Checkpointing: This is an evolution of state
+                                                                     • Durability: Once a transaction commits, all its ef-
+  checkpointing. Logical rather than physical up-
+                                                                       fects must be preserved, even if there is a failure.
+  dates are sent to the backup [Borr 84]. Adoption
+  of this scheme by Tandem cut message traffic 1n                    The programmer’s interface to transactions is quite sim-
+  half and message bytes by a factor of 3 overall [En-            ple: he starts a transaction by asserting the BeginTransac-
+  right]. Deltas have the virtue of performance as well           tion verb, and ends it by asserting the EndTransaction or
+  as making the coupling between the primary and                  AbortTransaction verb. The system does the rest.
+  backup state logical rather than physical. This means              The classical implementation of transactions uses locks
+  that a bug in the primary process is less likely to cor-        to guarantee consistency and a log or audit trail to insure
+  rupt the backup’s state.                                        atomicity and durability. Borr shows how this concept
+• Persistence: In persistent process-pairs, if the pri-           generalizes to a distributed fault-tolerant system [Borr 81,
+  mary process fails, the backup wakes up in the null             84].
+  state with amnesia about what was happening at the                 Transactions relieve the application programmer of
+  time of the primary failure. Only the opening and               handling many error conditions. If things get too compli-
+  closing of sessions is checkpointed to the backup.              cated, the programmer (or the system) calls AbortTrans-
+  These are called stable processes by [Lampson]. Per-            action which cleans up the state by resetting everything
+  sistent processes are the simplest to program and               back to the beginning of the transaction.
+  have low overhead. The only problem with persis-
+  tent processes is that they do not hide failures! If the        Transactions for fault-tolerant execution
+  primary process fails, the database or devices it man-          Transactions provide reliable execution and data availabil-
+  ages are left in a mess and the requester notices that          ity (recall reliability means not doing the wrong thing,
+  the backup process has amnesia. We need a simple                availability means doing the right thing and on time).
+
+
+                                                              6
+Transactions do not directly provide high system avail-              layer.
+ability. If hardware fails or if there is a software fault,             Sessions are the thing that make process-pairs work:
+most transaction processing systems stop and go through              the session switches to the backup of the process-pair
+a system restart – the 90 minute outage described in the             when the primary process fails [Bartlett]. Session se-
+introduction.                                                        quence numbers (called SyncIDs by Bartlett) resynchro-
+   It is possible to combine process-pairs and transactions          nize the communication state between the sender and re-
+to get fault-tolerant execution and hence avoid most such            ceiver and make requests/replies idempotent.
+outages.                                                                Transactions interact with sessions as follows: if a
+   As argued above, process-pairs tolerate hardware faults           transaction aborts, the session sequence number is logi-
+and software Heisenbugs. But most kinds of process-pairs             cally reset to the sequence number at the beginning of the
+are difficult to implement. The “easy” process-pairs, per-           transaction and all intervening messages are canceled. If
+sistent process-pairs, have amnesia when the primary fails           a transaction commits, the messages on the session will
+and the backup takes over. Persistent process-pairs leave            be reliably delivered EXACTLY once [Spector].
+the network and the database in an unknown state when
+the backup takes over.                                               Fault-tolerant Storage
+   The key observation is that the transaction mechanism             The basic form of fault-tolerant storage is replication of a
+knows how to UNDO all the changes of incomplete trans-               file on two media with independent failure characteristics
+actions. So we can simply abort all uncommitted transac-             – for example two different disc spindles or, better yet, a
+tions associated with a failed persistent process and then           disc and a tape. If one file has an MTBF of a year then
+restart these transactions from their input messages. This           two files will have a millennia MTBF and three copies
+cleans up the database and system states, resetting them             will have about the same MTBF – as the Tandem system
+to the point at which the transaction began.                         failure statistics show, other factors will dominate at that
+   So, persistent process-pairs plus transactions give a             point.
+simple execution model which continues execution even                   Remote replication is an exception to this argument. If
+if there are hardware faults or Heisenbugs. This is the              one can afford it, storing a replica In a remote location
+key to the Encompass data management system’s fault-                 gives good improvements to availability. Remote replicas
+tolerance [Borr 81]. The programmer writes fail-fast mod-            will have different administrators, different hardware, and
+ules in conventional languages (Cobol, Pascal, Fortran)              different environment. Only the software will be the same.
+and the transaction mechanism plus persistent process-               Based on the analysis in Table 2, this will protect against
+pairs makes his program robust.                                      75% of the failures (all the non-software failures). Since it
+   Unfortunately, people implementing the operating sys-             also gives excellent protection against Heisenbugs, remote
+tem kernel, the transaction mechanism itself and some                replication guards against most software faults.
+device drivers still have to write “conventional” process-              There are many ways to remotely replicate data, one
+pairs, but application programmers do not. One reason                can have exact replicas, can have the updates to the replica
+Tandem has integrated the transaction mechanism with                 done as soon as possible or even have periodic updates.
+the operating system is to make the transaction mecha-               [Gray] describes representative systems which took dif-
+nism available to as much software as possible [Borr 81].            ferent approaches to long-haul replication.
+                                                                        Transactions provide the ACID properties for stor-
+Fault-tolerant Communication                                         age – Atomicity, Consistency, Integrity and Durability
+Communications lines are the most unreliable part of a               [Haeder]. The transaction journal plus an archive copy
+distributed computer system. Partly because they are so              of the data provide a replica of the data on media with in-
+numerous and partly because they have poor MTBF. The                 dependent failure modes. If the primary copy fails, a new
+operations aspects of managing them, diagnosing failures             copy can be reconstructed from the archive copy by ap-
+and tracking the repair process are a real headache [Gray].          plying all updates committed since the archive copy was
+   At the hardware level, fault-tolerant communication is            made. This is Durability of data.
+obtained by having multiple data paths with independent                 In addition, transactions coordinate a set of updates to
+failure modes.                                                       the data, assuring that all or none of them apply. This al-
+   At the software level, the concept of session is intro-           lows one to correctly update complex data structures with-
+duced. A session has simple semantics: a sequence of                 out concern for failures. The transaction mechanism will
+messages is sent via the session. If the communication               undo the changes if something goes wrong. This is Atom-
+path fails, an alternate path is tried. If all paths are lost,       icity.
+the session endpoints are told of the failure. Timeout and              A third technique for fault-tolerant storage is partition-
+message sequence numbers are used to detect lost or du-              ing the data among discs or nodes and hence limiting the
+plicate messages. All this is transparent above the session          scope of a failure. If the data is geographically partitioned,
+
+
+                                                                 7
+local users can access local data even if the communica- References
+tion net or remote nodes are down. Again, [Gray] gives [Adams] Adams, E. “Optimizing Preventative Service of Software Prod-
+examples of systems which partition data for better avail- ucts”, IBM J. Res. and Dev., Vol. 28, No.1, Jan. 1984.
+ability.                                                   [Bartlett] Bartlett, J.,”A NonStop Kernel,” Proceedings of the Eighth
+                                                                   Symposium on Operating System Principles, pp. 22-29, Dec. 1981.
+Summary                                                            [Borg] Borg, A., Baumbach, J., Glazer, S., “A Message System Support-
+                                                                   ing Fault-tolerance”, ACM OS Review, Vol. 17, No.5, 1984.
+Computer systems fail for a variety of reasons. Large
+                                                                   [Borr 81] Borr, A., “Transaction Monitoring in ENCOMPASS,” Proc.
+computer systems of conventional design fail once every            7Th VLDB, September 1981. Also Tandem Computers TR 81.2.
+few weeks due to software, operations mistakes, or hard-           [Borr 84] Borr, A., “Robustness to Crash in a Distributed Database:
+ware. Large fault-tolerant systems are measured to have            A Non Shared-Memory Multi-processor Approach,” Proc. 9th VLDB,
+an MTBF at orders of magnitude higher– years rather than           Sept. 1984. Also Tandem Computers TR 84.2.
+weeks.                                                             [Burman] Burman, M. “Aspects of a High Volume Banking System”,
+   The techniques for fault-tolerant hardware are well doc-        Proc. Int. Workshop on Transaction Systems, Asilomar, Sept. 1985.
+umented. They are quite successful. Even in a high avail-          [Cristian] Cristian, F., “Exception Handling and Software Fault Toler-
+                                                                   ance”, IEEE Trans. on Computers, Vol. c-31, No.6, 1982.
+ability system, hardware is a minor contributor to system
+                                                                   [Enright] Enright, J. “DP2 Performance Analysis”, Tandem memo,
+outages.
+                                                                   1985.
+   By applying the concepts of fault-tolerant hardware to
+                                                                   [Gray] Gray, J., Anderton, M., “Distributed Database Systems Four Case
+software construction, software MTBF can be raised by              Studies”, to appear in IEEE TODS, also Tandem TR 85.5.
+several orders of magnitude. These concepts include:               [Haeder] Haeder, T., Reuter, A., “Principals of Transaction-Oriented
+modularity, defensive programming, process-pairs, and              Database Recovery”, ACM Computing Surveys, Vol. 15, No. 4, Dec.
+tolerating soft faults – Heisenbugs.                               1983.
+   Transactions plus persistent process-pairs give fault-          [Kim] Kim, W., “Highly Available Systems for Database Applications”,
+tolerant execution. Transactions plus resumable com-               ACM Computing Surveys, Vol. 16, No.1, March 1984
+munications sessions give fault-tolerant communications.           [Lampson] Lampson, B.W. ed, Lecture Notes in Computer Science Vol.
+                                                                   106, Chapter 11, Springer Verlag, 1982.
+Transactions plus data replication give fault-tolerant stor-
+                                                                   [Mourad] Mourad, S. and Andrews, D., “The Reliability of the Operat-
+age. In addition, transaction atomicity coordinates the            ing System”, Digest of 15th Annual Int. Sym. on Tolerant Computing,
+changes of the database, the communications net, and               June 1985. IEEE Computer Society Press.
+the executing processes. This allows easy construction of          [Schlichting] Schlichting, R.D., Schneider, F.B., “Fail-Stop Processors,
+high availability software.                                        an Approach to Designing Fault-Tolerant Systems”, ACM TOCS, Vol.
+   Dealing with system configuration, operations, and              1, No. 3, Aug. 1983.
+maintenance remains an unsolved problem. Administra-               [Spector] “Multiprocessing Architectures for Local Computer Net-
+                                                                   works”, PhD Thesis, STAN-CS-81-874, Stanford 1981.
+tion and maintenance people are doing a much better job
+than we have reason to expect. We can’t hope’ for better
+people. The only hope is to simplify and reduce human
+intervention in these aspects of the system.
+
+Acknowledgments
+The following people helped in the analysis of the Tan-
+dem system failure statistics: Robert Bradley, Jim En-
+right, Cathy Fitzgerald, Sheryl Hamlin, Pat Helland, Dean
+Judd, Steve Logsdon, Franco Putzolu, Carl Niehaus, Har-
+ald Sammer, and Duane Wolfe. In presenting the anal-
+ysis, I had to make several outrageous assumptions and
+“integrate” contradictory stories from different observers
+of the same events. For that, I must take full responsi-
+bility. Robert Bradley, Gary Gilbert, Bob Horst, Dave
+Kinkade, Carl Niehaus, Carol Minor, Franco Putzolu, and
+Bob White made several comments that clarified the pre-
+sentation. Special thanks are due to Joel Bartlett and es-
+pecially Flaviu Cristian who tried very hard to make me
+be more accurate and precise.
+
+
+
+
+                                                               8
+

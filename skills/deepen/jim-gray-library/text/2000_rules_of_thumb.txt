@@ -1,0 +1,524 @@
+                Rules of Thumb in Data Engineering
+
+                                  Jim Gray, Prashant Shenoy
+
+
+                                           December 1999
+                                         Revised March 2000
+                                            Technical Report
+                                             MS-TR-99-100
+
+
+
+
+                                         Microsoft Research
+                                     Advanced Technology Division
+                                        Microsoft Corporation
+                                         One Microsoft Way
+
+                                        Redmond, WA. 98052
+
+
+
+
+© 2000 IEEE. Personal use of this material is permitted. However, permission to reprint/republish
+this material for advertising or promotional purposes or for creating new collective works for resale
+or redistribution to servers or lists, or to reuse any copyrighted component of this work in other
+works must be obtained from the IEEE. This document can be found in the Proceedings of 16th In-
+ternational Conference on Data Engineering, pp.3-12.
+                                                 Rules of Thumb in Data Engineering
+                                                             Jim Gray, Prashant Shenoy
+                                                        Microsoft Research, U. Mass, Amherst.
+                                                      Gray@Microsoft.com, shenoy@cs.umass.edu
+
+
+                                      Abstract                             MIPS, Alpha, PowerPC, SPARC, Itanium) or 96-bit (e.g.
+This paper reexamines the rules of thumb for the design                    AS400) addressing. Physical addressing is 36-bits to 40-
+of data storage systems. Briefly, it looks at storage, proc-               bits, and growing a bit per 18 months. At this rate it will
+essing, and networking costs, ratios, and trends with a                    take two or three decades to exceed 64-bit addressing.
+particular focus on performance and price/performance.
+Amdahl’s ratio laws for system design need only slight                          Moore’s Law originally applied only to random ac-
+revision after 35 years—the major change being the in-                     cess memory (RAM). It has been generalized to apply to
+creased use of RAM. An analysis also indicates storage                     microprocessors and to disk storage capacity. Indeed,
+should be used to cache both database and web data to                      disk capacity has been improving by leaps and bounds; it
+save disk bandwidth, network bandwidth, and people’s                       has improved 100 fold over the last decade. The mag-
+time. Surprisingly, the 5-minute rule for disk caching                     netic aerial density has gone from 20 Mbpsi (megabits per
+becomes a cache-everything rule for web caching.                           square inch in 1985), to 35 Gbpsi late in 1999. Disks spin
+                                                                           three times faster now, but they are also 5 times smaller
+1. Introduction                                                            than they were 15 years ago, so the data rate has im-
+                                                                           proved only 30 fold (see Figure 1). Today, disks can
+We engineer data using intuition and rules of thumb.                       store over 70 GB, have access times of about 10 millisec-
+                                                                           onds (~ 120 (Kaps kilobyte accesses per second)), and
+Many of these rules are folklore. Given the rapid changes
+in technology, these rules need to be constantly re-                       transfer rates of about 25MBps (~ 20 Maps (megabyte
+evaluated.                                                                 accesses per second)) and a scan time of 45 minutes [1].
+                                                                           These disks cost approximately 42 k$/TB today (15
+This article is our attempt to document some of the main                   k$/TB for lower-performance IDE drives packaged, pow-
+rules we use in engineering database systems. Since we                     ered, and network served) [2]. Within 5 years, the same
+                                                                           form-factor should be storing nearly ½ terabyte, support
+have to design for the future, the article also assesses
+technology trends and predicts the sizes of future systems.                150 Kaps, and have a transfer rate of 75 MBps. At that
+                                                                           rate, it will take nearly 2 hours to scan the disk. By then,
+                                                                           the prices should be nearing 1 k$/TB (including server).
+2. Storage performance and price
+     Many rules of thumb are a consequence of Moore’s                                        Magnetic Disk Parameters vs Time
+                                                                             1000000
+Law, which posits that circuit densities increase four fold
+                                                                              100000
+every three years. That means that memories get four
+times larger each three years, or about 100x per decade.                       10000
+It also means that in-memory data grows at this rate: cre-                      1000
+ating the need for an extra bit of addressing every 18
+                                                                                  100
+months. In 1970 we were comfortable with 16-bit address
+spaces: it was rare to find a machine with a mega-word of                          10
+memory. Thirty years later we need 20 extra address bits                            1                                     tpi
+to address the 64 GB memories (36 bit addresses) found                                                                    kbpi
+                                                                                  0.1                                     MBps
+in the larger computers on the market. Today most com-                                                                    Gbpsi
+                                                                                 0.01
+puter architectures give 64-bit logical addressing (e.g.
+                                                                                        84      88     92     96     00      04
+___________________________________________________
+                                                                                                             year
+This paper appeared in the proceedings of the IEEE International
+Conference on Data Engineering, Feb 28-30, San Diego, CA.                 Figure 1: Disk capacity has improved 1,000 fold in the
+Copyright © 2000 Institute of Electrical and Electronics Engineers,       last 15 years, consistent with Moore’s law, but the transfer
+Inc. Personal use of this material, including hard copy reproduc-         rate MBps has improved only 40x in the same time. The
+tion, is permitted. Permission to reprint, republish and/or distribute    metrics are tracks per inch (tpi), thousands of bits per linear
+this material in whole or in part for commercial purposes must be
+obtained from the IEEE. For information on obtaining permission,          inch of track (kbpi), mega bytes per second as the media
+send an e-mail message to the Intellectual Property Rights Admin-         spins (MBps), and gigabits per square inch (Gbpsi).
+istrator.
+    The ratio between disk capacity and disk accesses per         disk. Another way is to store the data multiple times and
+second is increasing more than 10x per decade. Also, the          spread the reads among the copies: again suggesting mir-
+capacity/bandwidth ratio is increasing by 10x per decade.         roring.
+These changes have two implications: (1) disk accesses
+become more precious; and (2) disk data must become                    Meanwhile, there has been great progress in tape
+cooler (have fewer accesses per byte stored) [3].                 storage: tapes now store 40 GB. A drive with a 15 tape
+                                                                  cartridges costs about 10k$ and stores about 600GB
+     We reduce disk accesses by (1) using a few large             nearline. These drives provide 6 MBps data rates, so the
+transfers rather than many small ones, (2) favoring se-           scan time for all the cartridges is about 1.2 days. Such
+quential transfers, and (3) using mirroring rather than           nearline tape archives deliver approximately zero Kaps
+RAID5. To elaborate on thes e three points. (1) We can            and Maps (10-2 Kaps is typical). Such a tape archive is
+reduce disk accesses by caching popular (hot) pages in            half the cost per terabyte of disk storage, but tape does not
+main memory, and writing a log of their changes to disk.          provide easy access to the data. The cost per random tape
+This reduces random reads, and converts random writes to          access is about a hundred thousand times higher
+sequential (log) writes. Periodically, the written data                 (100 accsses/second/1K$ disk versus                    .
+needs to be checkpointed to disk to minimize redo work                000.01 accesses/second/10,000$ tape). In five years,
+at restart, but often this checkpoint work can be done in         this situation should be even more dramatic -- a million-
+the background piggybacking on other IOs, and can be              to-one is compelling. Tape capacities are expected to
+sorted so that it is nearly sequential. These important           improve faster than tape speed, and access time is ex-
+optimizations are used by database systems today. Over            pected to stay about the same, making the access problem
+the last decade, disk pages have grown from 2KB to 8KB            even more problematic: several days to scan a tape ar-
+and are poised to grow again. In ten years, the typical           chive. This suggests nearline-tape will be purely archival.
+small transfer unit will probably be 64KB, and large
+transfer units will be a megabyte or more. (2) A random                Historically, tape, disk, and RAM have maintained
+access costs a seek time, half a rotation time, and then the      price ratios of about 1:10:1000. That is, disk storage has
+transfer time. If the transfer is sequential, there is no seek    been 10x more expensive than tape, and RAM has been
+time, and if the transfer is an entire track, there is no rota-   100x more expensive than disk. Indeed, today one can
+tion time. So track-sized sequential transfers maximize           buy a 40 GB tape cartridge for 80$, a 36 GB disk for
+disk bandwidth and arm utilization. The move to sequen-           1200$, and 1 GB of memory for about 2400$ [4] (DELL
+tial disk IO is well underway. As already mentioned,              and SCSI are not the least expensive). These ratios trans-
+caching, transaction logging, and log-structured file sys-        late to 2$/GB, 32 $/GB and 2.4k$/GB giving a ratio of
+tems convert random writes into sequential writes. This           1:16:1200 for storage.
+has already had large benefits for database systems and
+operating systems. These techniques will continue to                  But, when the offline tapes are put in a nearline tape
+yield benefits as disk accesses become even more pre-             robot, the price per tape rises to 10K$/TB while packaged
+cious. (3) Both RAID5 (parity) and RAID1 (mirrors)                disks are 30K$/TB. This brings the ratios back to
+offer fault-tolerant disk storage. Since IOs are the scarce       1:3:240. It is fair to say that the storage cost ratios are
+resource, one wants to optimize for IOs rather than for           now about 1:3:300.
+space. The argument in favor of mirrors versus RAID5 is
+that mirrored disks offer double the read bandwidth to                 The cost/MB of RAM declines with time: about 100x
+each data item, and they cost only one extra access for a         per decade. Since disk and RAM have a 1:100 price ratio,
+write. RAID5 uses up to four disk accesses to do a write,         this price decline suggests that what is economical to put
+and improves read bandwidth only if the data requests go          on disk today will be economical to put in RAM in about
+to different disks. RAID5 saves disk space (gigabytes) at         10 years.
+the expense of more IOs for disk writes.
+                                                                       A striking thing about these storage cost calculations
+     Ten years ago, disks offered 50 Kaps (kilobyte ac-           is that disk prices are approaching nearline tape prices.
+cesses per second) to 1GB of data, and 5-minute disk scan         By using RAID (mirroring or parity), administrators sac-
+times. Current disks offer 120 Kaps to 80 GB of data with         rifice disk storage capacity to protect against disk media
+a 45-minute scan times. This is 1 Kaps per 20MB in 1990           failures. Administrators are discovering that you may be
+vs. 1 Kaps per 500MB now. So, modern disk data needs              able to backup a terabyte to tape, but it takes a very long
+to be at 25x colder than data of 10 years ago. In fact, all       time to restore a terabyte from tape. As they see petabyte
+the “hot” data of 1990 has migrated to RAM: disk cost             stores looming on the horizon, administrators are moving
+10$/MB in that era, five times what RAM costs today. So           to strategies that maintain multiple disk versions online so
+1990s disk data can afford to live in RAM today. The use          that one never has to restore the database from tape. In-
+of large main memories is one way to cool the data on             creasingly, sites that need to be online all the time are
+
+
+
+                                                                                                                              2
+replicating their entire state at a remote site, so that they   12. Amdahl’s memory law: ? ? 1: that is, in a balanced
+have two online copies of the data. If one site fails, the          system the MB/MIPS ratio, called alpha (? ), is 1.
+other offers access to the data, and the failed site can re-    13. Amdahl’s IO law: Programs do one IO per 50,000
+cover from the data stored at the second site. In essence,          instructions.
+disks are replacing tapes as backup devices. Tapes con-
+tinue to be used for data interchange, but if Gilders’ Law      How have Amdahl’s laws changed in the last 35 years?
+holds (see below), then someday all data interchange will       The parallelism law is algebra, and so remains true and
+go over the Internet rather than over sneaker net. That         very relevant to this day. The thing that is surprising is
+means tape will be less frequently used for data inter-         that the other 35-year-old “laws” have survived while
+change.                                                         speeds and sizes have grown by orders of magnitude and
+                                                                while ratios have changed by factors of 10 and 100.
+     Storage prices have dropped so low that the storage
+management costs now exceed storage hardware costs                   To re-evaluate Amdahl’s IO laws, one can look at the
+(similarly, PC management costs exceed the cost of the          Transaction Processing Performance Council benchmark
+hardware). In 1980, there was a rule of thumb that one          systems [4]. These systems are carefully tuned to have
+needed a data administrator for 1GB of storage. At that         the appropriate hardware for the benchmark. For exa m-
+time a GB of disk cost about a million dollars, and so it       ple, the OLTP systems tend to use small disks because the
+made sense to have someone optimizing it and monitoring         benchmarks are arm limited, and they tend to use the ap-
+the use of disk space. Today, a million dollars can buy 1       propriate number of controllers. The following paragraphs
+TB to 100 TB of disk storage (if you shop carefully). So,       evaluate Amdahl’s balanced system law: concluding that
+today, the rule of thumb is that a person can manage 1 TB       with current technology it should be amended to say:
+to 100 TB of storage – with 10 TB being typical. The
+storage management tools are struggling to keep up with         10. Amdahl’s revised balanced system law: A system
+the relentless growth of storage. If you are designing for          needs 8 MIPS/MBpsIO, but the instruction rate and
+the next decade, you need build systems that allow one              IO rate must be measured on the relevant workload.
+person to manage a 10 PB store.                                     (Sequential workloads tend to have low CPI (clocks
+                                                                    per instruction), while random workloads tend to
+Summarizing the Storage rules of thumb:                             have higher CPI.)
+1. Moore’s Law: Things get 4x better every three years.         12. Alpha (the MB/MIPS ratio) is rising from 1 to 4. This
+2. You need an extra bit of addressing every 18 months.             trend will likely continue.
+3. Storage capacities increase 100x per decade.                 13. Random IO’s happen about once each 50,000 ni -
+4. Storage device throughput increases 10x per decade.              structions. Based on rule 10, sequential IOs are
+5. Disk data cools 10x per decade.                                  much larger and so the instructions per IO are much
+6. Disk page sizes increase 5x per decade.                          higher for sequential workloads.
+7. NearlineTape:OnlineDisk:RAM storage cost ratios
+    are approximately 1:3:300.                                       Amdahl’s balanced system law becomes more com-
+8. In ten years RAM will cost what disk costs today.            plex to interpret in the new world of quad-issue pipelined
+9. A person can administer a million dollars of disk stor-      processors. Table 2 summarizes the following analysis.
+   age: that is 30TB of storage today.                          In theory, the current 550 MHz Intel processors are able
+And two observations:                                           to execute 2 billion instructions per second, so Amdahl’s
+* Disks are replacing tapes as backup devices.                  IO law suggests that each 550 MHz processor needs 160
+* On random workloads, disk mirroring is preferable to          MBps of disk bandwidth (all numbers rounded). How-
+   RAID5 parity because it spends disk space (which is          ever, on real benchmarks, these processors demonstrate
+   plentiful) to save disk accesses (which are precious).       1.2 clocks per instruction (CPI) on sequential workloads
+                                                                (TPC-D,H,R) and 2.2 clocks per instruction on random IO
+3. Amdahl’s system balance rules                                workloads (TPC-C, W) [7,8]. These larger CPIs translate
+                                                                to 450 MIPS on sequential and 260 MIPS on random
+    Gene Amdahl is famous for many rules of thumb.              workloads. In turn, Amdahl’s law says these processors
+For data engineering, there are four famous ones [6]:           need 60 MBps sequential IO bandwidth (~450/ 8) and 30
+10. Amdahl’s parallelism law: If a computation has a            MBps random of IO bandwidth (~260/8) per cpu respec-
+    serial component S and a parallel component P, then         tively (for tpcH and tpcC). A recent tpcH benchmark by
+    the maximum speedup is (S+P)/S.                             HP [5] used eight 550 MHz processors with 176 disks.
+11. Amdahl’s balanced system law: A system needs a bit          This translates to 22 disks per cpu, or about 70 MBps of
+    of IO per second for each instruction per second:           raw disk bandwidth per cpu and 120 MBps of controller
+    about 8 MIPS per MBps.                                      bandwidth per cpu (consistent with Amdahl’s prediction
+                                                                of 60MBps). Amdahl’s law predicts that system needs
+
+
+
+                                                                                                                        3
+30MBps of IO bandwidth. Using 8KB pages and 100                    4. Networking: Gilder’s Law
+IO/s per disk implies 38 disks per processor – a number
+comparable to the 50 disks Dell actually used [4].                      George Gilder predicted in 1995 that network band-
+                                                                   width would triple every year for the next 25 years [13].
+     Both TPC results mentioned here use approximately             So far his prediction seems to be approximately correct.
+½ gigabyte of RAM per processor. Based on the MIPS                 Individual fiber optic wavelength channels run at 40
+column of Table 2, the TPC systems have approximately              Gbps. Wave-division multiplexing gives 10 or 20 chan-
+1 to 2 MB per MIPS. These are Intel IA32 processors                nels per fiber. Multi-terabit links are operating in the
+that are limited to 4 GB of memory. When one considers             laboratory on a single fiber. Several companies are de-
+HP, IBM, and Sun systems that do not have the 4GB                  ploying thousands of miles of fiber optic networks. We
+limit, there is between 1GB/cpu and 2.5GB/cpu (12 to 64            are on the verge of having very high-speed (Gbps) wide-
+GB overall). This roughly translates to a range of be-             area networks. When telecom deregulation and the sub-
+tween 2 MB/MIPS 6 MB/MIPS. As argued by many                       sequent competition takes hold, these links will be very
+main memory database advocates (e.g. [9]), as disk IOs             inexpensive.
+become more precious, we are moving towards relatively             14. Gilder’s law: Deployed bandwidth triples every year.
+larger main memories. Alpha, is rising from 1 to 4.                15. Link bandwidth improves 4x every 3 years.
+
+     What about the execution interval? How many in -                   Paradoxically, the fastest link on the Microsoft cam-
+structions are executed per IO? In essence, if 8 instruc-          pus is the 2.5 Gbps WAN link to the Pacific Northwest
+tions are executed per byte of IO (law 10), and if 50 K            GigaPOP. This inverts the speed ratios between WANS
+instructions are executed per IO (law 13), then IOs are            and LANs. It takes three 1 Gbps Ethernet links to satu-
+about 6 KB (~50/8). Again, there is a dichotomy between            rate the WAN link. LAN speeds are about to rise to 1
+sequential and random workloads: On TPC-C bench-                   Gbps, and then to 10 Gbps via switched point-to-point
+marks which do a lot of random IO, there are about 60 k            networking.
+instructions between 8 KB IOs (~7*8) and on TPC-H
+sequential workloads there are 200 k instructions between              Latency due to the speed of light will be with us for-
+64 KB IOs (~3*64).                                                 ever -- 60 ms round trip within North America, within
+                                                                   Europe, and within Asia. However, terabit-per-second
+     In summary, Amdahl’s laws are still good rules-of-            bandwidth will allow us to design systems that cache data
+thumb in sizing the IO and memory systems. The major               locally, and quickly access remote data if needed.
+changes are that (1) the MIPS rate must be measured,
+rather than assuming a CPI of 1 or less, (2) sequential IOs             The cost of sending a message is [11]:
+are much larger than random IOs and hence the instruc-               Time = senderCPU + receiverCPU + bytes/bandwidth
+tions per IO are much higher for sequential workloads, (3)         Traditionally, high-speed networking has been limited by
+Alpha (the MB/MIPS ratio) is rising from 1 to 2 or 4.              software overheads. The sender and receiver cpu costs
+This trend will likely continue. Given the 100x and                have typically been 10,000 instructions and then 10 in -
+1,000x changes in device speeds and capacities, it is strik-       structions per byte. So to send 10 KB cost 120,000 in -
+ing that Amdahl’s ratios continue to hold.                         structions or something like a millisecond of cpu time.
+                                                                   The transmit time of 10,000 bytes on 100 Mbps Ethernet
+     Interestingly, Hsu, Smith, and Young, came to simi-           is less than a millisecond – so the LAN was cpu limited,
+lar conclusions in their very detailed study of TPC-C and          not transmit time limited.
+other workload behaviors [10]. Their excellent study
+shows the wide spectrum of behaviors, both across work-            A rule of thumb for traditional message systems has been
+loads, and within a given workload.                                 16. A network message costs
+ Table 2: Amdahl’s balanced system law and the parameters                10,000 instructions and 10 instructions per byte.
+ of two recent TPC benchmarks (www.tpc.org). The CPI                17. A disk IO costs
+ varies among the workloads, and the IO sizes also vary,                 5,000 instructions and 0.1 instructions per byte.
+ still, the instructions/byte are similar to Amdahl’s prediction
+ of eight instructions per byte (a bit of IO per instruction).           Why are disk IOs so efficient when compared to
+                                                                    network IO? After all, disk IOs are just messages to the
+            MHz/ CPI mips KB/ IO/s/ Disks Disks/ MB/s/ Ins/
+                                                        IO          disk controller – a storage network message rather than a
+             cpu          IO disk          cpu cpu Byte
+                                                                    LAN or WAN message. There have been substantial
+  Amdahl      1   1   1    6                             8          strides in understanding that simple question. The net-
+  TPC-C                                                             working community has offloaded much of the tcp/ip
+ = random 550      2.1 262    8   100   397    50     40       7
+                                                                    protocol to the NICs (much as SCISI and IDE/ATA do),
+  TPC-H
+= sequential 550   1.2 458   64   100   176    22    141       3    and the networking software now uses memory more
+
+
+                                                                                                                           4
+aggressively to buffer requests and correct errors. Check-           There is a hardware trend to design huge (256 way)
+summing, fragmentation/assembly, and DMA have all               multiprocessors that operate on a shared memory. These
+been added to high-speed NICs. Much of this work has            systems are especially prone to instruction stretch in
+gone on under the banner of System Area Networking              which bus and cache interference from other processors
+(SAN) and the Virtual Interface Architecture [12]. The          causes each processor to slow down. Getting good per-
+current revision to rule of thumb is:                           formance from these massive SMPs will require careful
+18. The cpu cost of a SAN network message is                    attention to data partitioning, data locality, and processor
+         3,000 clocks and 1 clock per byte.                     affinity.
+
+     It is now possible to do an RPC in less than 10 mi-             An alternative design opts for many nodes each with
+croseconds, and to move a Gbps from node to node while          its own IO and bus bandwidth and all using a dataflow
+the processor is only half busy doing network (tcp/ip)          programming model and communicating via a high-speed
+tasks. The network carries 100,000 packets per second           network [15]. These designs have given rise to very im-
+(300 M clocks according to rule 18) and 128 M bytes per         pressive performance, for example, the sort speed of
+second (128 M clocks according to rule 18) so a 650 MHz         computer systems has been doubling each year for the last
+machine has 200 M clocks to spare for useful work.              15 years through a combination of increased node speed
+                                                                (about 60%/year) and parallelism (about 40%/year). The
+     Currently, it costs a more than a dollar to send           1999 terabyte sort used nearly 2,000 processors and disks,
+100MB via a WAN (see Table 7 of Odlyzko [14]), while            http://research.microsoft.com/~gray/sort_benchmark.
+local disk and LAN access are 10,000 times less expen-
+sive. This price gap is likely to decline to 10:1 or even            The argument for the many-little scalable design tries
+3:1 over the next decade. As suggested in subsequent            to leverage the fact that mainframe:mini:commodity price
+sections, when bandwidth is sufficient and inexpensive,         ratios are approximate 100:10:1. That is, mainframes cost
+local disks will act as caches for commonly used data and       about 100 times more than commodity components, and
+a buffer for pre -fetched data.                                 semi -custom mini-computers have a 10:1 markup over
+                                                                commodity components (see prices for comparable sys-
+5. Caching: Location, Location, and Location                    tems at the www.tpc.org benchmarks). The cluster advo-
+                                                                cates admit the many-little design is less efficient, but
+     Processor clock speeds have been improving, as has         they argue that it is more cost-effective.
+the parallelism within the processor. Modern processors
+are capable of issuing four or more instructions in parallel        There seems no good general rule of thumb for cpu-
+and pipelining instruction execution.                           caches beyond bigger-is-better and locality-is-better. But,
+                                                                two good rules have evolved for disk data locality and
+     In theory, current quad-issue Intel processors are able    caching. It is possible to quantitatively estimate when
+to execute two billion instructions per second -- 4 in-         you should cache a disk page in memory: trading off
+structions per clock and 550 M clocks per second. In            memory consumption against disk arm utilization.
+practice, real benchmarks see CPI (clocks per instruction)
+of 1 to 3. The CPI is rising as processor speeds outpace             As mentioned before, disk arms are precious. If a
+memory latency improvements [6,7,8].                            disk costs $1200 and does 120 accesses per second, then a
+                                                                disk access per second costs $10. It would be advanta-
+    The memory subsystem cannot feed data to the proc-          geous to spend up to $10, to save one access per second.
+essor fast enough to keep the pipelines full. Architects        Well, $10 buys about 10MB of RAM, so if a cache of that
+have added 2-level and 3-level caches to the processors in      size would indeed save one access per second, it would be
+order to improve this situation, but if programs do not         a good investment.
+have good data locality, there is not much the architects
+can do to mask “compulsory” cache misses.                            This suggests the question: How frequently must a
+                                                                disk-resident object be accessed to justify caching it in
+      Software designers are learning that careful program      main memory?” When does the rent of RAM space bal-
+and data placement and cache sensitive algorithms with          ance the cost of an access? The analysis in [16] shows
+good locality give 3x speedups on current processors. As        that:
+processor speeds continue to outpace memory speeds,             BreakEvenReferenceInterval (seconds) =
+there will be increasing incentives for software designers               PagesPerMBofRAM           x PricePerDiskDrive
+to look for algorithms with small instruction cache foot-                AccessPerSecondPerDisk        PricePerMBofDRAM
+prints, with predictable branching behavior, and with                For randomly accessed data, the first term (call the
+good or predictable data locality (i.e., clustered or sequen-   technology ratio) is approximately 1; the second term
+tial access).                                                   (called the economic ratio) varies from 100 to 400 today.
+
+
+
+                                                                                                                          5
+    So, the breakeven interval is about 2 minutes to 5 minutes     Then: Response_Time_Improvement =
+    for randomly accessed pages.                                     R_remote - (H * R_local + (1-H) * R_remote) =
+                                                                                           H * (R_remote - R_local)
+        For sequentially accessed data the technology ratio is
+    approximately 0.1 (1MB “pages” and 10 pages per sec-                R_remote consists the server response time and the
+    ond) so the break-even interval is 10 to 40 seconds.           download network time. The server response time (the
+                                                                   queuing delay and the service time) can range from sev-
+    This analysis gives the rules:                                 eral hundred mi lliseconds to several seconds. Assume a
+    19. The 5-minute random rule: cache randomly accessed          response time of 3 seconds.
+        disk pages that are re-used every 5 minutes.
+    20. The 1-minute sequential rule: cache sequentially ac-            The download time over the network depends on
+        cessed disk pages that are re-used within a minute.        network conditions and on link speeds. WAN Links are
+                                                                   typically shared, so the user bandwidth is smaller than the
+        Both of these time constants are rising slowly as          typical link bandwidth (a bottlenecked link at the server
+    technology evolves.                                            may further reduce the bandwidth/request). Assume that
+                                                                   the effective LAN/WAN bandwidth is 100KB/s; hence
+         A related rule that has not seen much use is that one     time to transmit a 10KB object is a tenth of a second.
+    can spend 1 byte of RAM to save 1 MIPS. The argument           With these assumptions, the R_remote is dominated by
+    goes that RAM costs about 1$/MB and today one can get          the 3 second server response time.
+    100 extra MIPS from Intel for 100 extra dollars (ap-
+    proximately). So, the marginal cost of an instruction per          Modem bandwidth available on a dial-up link is 56
+    second is approximately the marginal cost of a byte. Fif-      Kbs. With compression, the effective bandwidth is often
+    teen years ago, the ratio was 10:1, but since then Intel and   twice that, but there are also start/stop overheads. As-
+    VLSI has made processors much less expensive.                  sume an effective modem bandwidth of 5KB/s. Hence,
+    21. Spend 1 byte of RAM to save 1 instruction per sec-         the modem transmit time for a 10 KB object is 2 seconds,
+         ond.                                                      and R_remote is 5 seconds.
+
+         Now consider web page caching. Logic similar to           A mobile user on a wireless link gets 1KB/s, and so it
+    the five-minute rule suggests when it pays to cache web        takes 10 seconds to download a 10KB object and
+    pages. The basic diagram is shown in Figure 2, where the       R_remote is 13 seconds. This is why servers for mobile
+    link speed varies from 100 KBps for intranets, to mo dem       systems often compress the data to make the objects much
+    speeds of 5 KBps, to wireless speeds of 1 KBps. In case        smaller (1KB rather than 10KB).            Summarizing,
+    of a modem and wireless links, assume a local browser          R_remote can be estimated as:
+    cache. For high-speed links, the cache could either be a       R_remote
+    browser cache or a proxy cache. In case of a proxy, as-           = 3 + .1 = 3s (high speed connection)
+    sume a fast connection between the user and the cache             = 3 + 2 = 5s (modem connection)
+    (e.g., a 100Mb/s LAN), so that the time cost of accessing         = 3 + 10 = 13s (wireless connection)
+    data from a remote proxy disk is not significantly larger
+    than that from a local disk.                                        R_local depends many details, but fundamentally lo-
+                                                                   cal access avoids the server-time wait (assumed to be 3
+    Given these assumptions consider three questions:              seconds). If the object is in the browser cache, local ac-
+    (1) How much does web caching imp rove response                cess avoids the transmission time. If the local access
+         times?                                                    saves both, then the R_local is a fraction of a second.
+    (2) When should a web page be cached?                          Hence,
+    (3) How large should a web cache be?                           R_local = 100ms (browser cache)
+                                                                            = 300ms (proxy cache intranet)
+    Assume that the average web object is 10KB. Define                      = 2s     (proxy cache modem)
+    R_remote: response time to access an object at server.                  = 10s (proxy cache wireless)
+    R_local: response time to access the object fromcache.
+    H: cache hit ratio (fraction of requests cache satisfies).         Proxy cache studies indicate that H_proxy_cache =
+                                                                   0.4 is an upper bound [17,18]. Anecdotal evidence sug-
+                                                                   gests browser hit ratios are smaller: assume.
+     client       cache            Link          server            H_browser_cache = 0.20. Assuming a 20$/hr human
+                                                                   cost, each second costs 0.55 cents. Using that number,
+Figure 2. The client-side or proxy web cache improves response
+                                                                   Table 3 computes the response-time savings using the
+   time by eliminate link transmission times and server times.     Response_Time_Improvement equation above.
+
+
+
+                                                                                                                            6
+                                                                                       How will Table 4 change with time? Network
+      Table 3: Shows the benefits of browser and proxy or client                  speeds are predicted to increase and network costs are
+      caching (pennies saved) assuming people’s time is worth
+                                                                                  predicted to drop. Column 4, Time=A/B, may drop from
+      20$/hr.                                                                     10 months to one day. But column 6, Time=(A+C)/B,
+      connection     cache     R_remote       R_local        H       People
+                                seconds       seconds        hit     Savings      will grow as people’s time grows in value, while the cost
+                                                            rate     ¢/page       of technology (A and B) decline. In summary, technol-
+        LAN          proxy           3             0.3       .4        0.6        ogy trends suggest that web page caching will continue
+        LAN         browser          3             0.1       .2        0.3        be popular, especially for bandwidth-limited mobile
+       Modem         proxy           5              2        .4        0.7        devices.
+       Modem        browser          5             0.1       .2        0.5
+       Mobile        proxy          13             10        .4        0.7              How much would it cost to cache all web accesses
+       Mobile       browser         13             0.1       .2        1.4         for a year? If users make 10 requests per hour with a hit
+          If a user makes ten requests per hour, and uses the                      ratio of H=0.4 the cache gets 4 hits and 6 new objects
+     web 400 hours per year then the benefit of caching is be-                   per user hour. For an 8-hour workday and 10KB objects,
+     tween 3 and 14 cents per hour. For our hypothetical user,                   this adds 480KB per user per day. If H=0.2, then it adds
+     this is a savings of between $12 and 48 per year. This                      640KB per user per day. In both cases, this is about a
+     should be balanced against the cost of the disk to store the                penny a day. So, again we conclude a simple “cache eve-
+     pages – but as mentioned earlier, $12 will buy a LOT of                     rything” strategy is a good default.
+     disk space. Indeed, our hypothetical user is accessing
+     4,000 10KB pages that are at most 40 MB. This is less                       These calculations suggest the simple rule:
+     than a dollar’s worth of disk space.                                        22. Cache web pages if there is any chance they will be
+                                                                                     re-referenced within their lifetime.
+          Having computed the savings for a cached page (Ta-
+     ble 3), we can now compute the point where caching a                             Web object lifetimes are bi-modal, or even tri-modal
+     page begins to pay off. Table 4 has the calculation. The                    in some cases. Studies show median lifetimes to be a few
+     first column of Table 4 estimates download costs from                       days or few tens of days [19]. The average page has a 75-
+     Odlyzko [14 table 7] and assumes a wireless (1KBps) link                    day lifetime (ignoring the modalities and non-uniform
+     costs $0.1/minute ($6/hr). The second column of Table 4                     access.) A heuristic that recognized high-velocity pages
+     assumes desktop disks cost 30$/GB and last 3 years,                         would both improve usability (by not showing stale
+     while mobile storage devices are 30x more expensive.                        cached pages) and would save cache storage. This is a
+                                                                                 area of active research and development.
+          The break-even cost of storing a page happens when
+     the storage rent matches the download cost.            The                       A major assumption in these calculations is that
+     download cost has two components: the network time (A                       server performance will continue to be poor: 3 seconds on
+     in Table 4) and the people time C. The fourth column of                     average. Popular servers tend to be slow because web site
+     the table shows the calculation ignoring people’s time, C.                  owners are not investing enough in servers and band-
+     In that cas e the break-even interval is a year or more                     width. With declining costs, web site owners could invest
+     rather than many decades. When people time is included,                     more and reduce the 3-second response time to less than a
+     the reference interval rises to many decades. In either                     second. If that happens, then the web cache’s people cost
+     case, the table indicates that caching is very attractive:                  savings will evaporate, and the need for caching would be
+     cache a page if will be referenced within the next 5 years                  purely to save network bandwidth and download time --
+     (longer than the lifetime of the system (!)).                               which we believe will only be a scarce resource for mo-
+                                                                                 bile devices.
+          Certainly, our assumptions are questionable, but the
+     astonishing thing is that a very wide spectrum of assump-                   6. Summary
+     tions concludes that a “cache everything” strategy is de-
+     sirable.                                                                         Data stores will become huge. Our biggest challenge
+                                                                                 is to make it easy to access and manage them. Automat-
+Table 4: Caching is a very good deal: cache web pages if they                    ing all the tasks of data organization, accesses, and pro-
+will be re -used within the few years.                                           tection.
+                   A         B       Time =A/B             C          Time=
+               $/10 KB    $/10 KB   Break-even       People Cost     (A+C)/B         Disk technology is overtaking tapes, but at the same
+              download storage/mo      cache         Of download    Break Even
+             network cost           storage time      $ (table 3)                time disks are morphing into tape-like devices with pri-
+Internet/LAN     1e-4     8.E-06      13 months          0.02       184 years    marily sequential access to optimize the use of disk arms.
+   Modem         2E-4     8.E-06      27 months          0.03       307 years    Meanwhile, RAM improvements encourage us to build
+  Wireless       1E-2     2.E-04      44 months          0.07       30 years     machines with massive main memory. Indeed, the main
+
+
+                                                                                                                                           7
+change to Amdahl’s balanced system law is that alpha                  [15] R.H. Arpaci-Dusseau, E. Anderson, N. Treuhaft, D.E.
+(=MIPS/RAM size) is rising from 1 to 10.                                   Culler, J.M. Hellerstein, D.A. Patterson, “Rivers. Cluster
+                                                                           I/O with River: Making the Fast Case Common.” IOPADS
+                                                                           '99.
+    Network bandwidth is improving at a rate that chal-
+                                                                      [16] J. Gray, G. Graefe, “The 5 minute rule, ten years later,”
+lenges many of our design assumptions. LAN/SAN soft-                       SIGMOD Record 26(4): 63-68, 1997
+ware is being streamlined so it is no longer the bottleneck.          [17] R. Tewari and M. Dahlin and H M. Vin and J. Kay, ”Be-
+This may well allow a re -centralization of computing.                     yond Hierarchies: Design Considerations for Distributed
+                                                                           Caching on the Internet”, IEEE ICDCS'99 June, 1999.
+    Still, data caching is an important optimization. Disk            [18] A. Wolman and G. Voelker and N. Sharma and N. Card-
+caching still follows the 5-minute random rule and the                     well, A. Karlin, H. Levy,”On the scale and performance of
+one-minute sequential rule. Web caching encourages                         cooperative web proxy caching”, ACM SOSP'99, pp.16--
+designs that simply cache all pages.                                       21, Dec., 1999.
+                                                                      [19] J. Gwertzman, M. Seltzer, “World-Wide Web Cache Con-
+                                                                           sistency,” 1996 USENIX Annual Technical Conference,
+7. Acknowledgments                                                         Jan. 1996.
+                                                                       [20] T. Kelley, D. Reeves, “Optimal Web Cache Sizing: Scal-
+We thank Dave Patterson of Berkeley and especially                         able Methods for Exact Solution,” Feb. 2000, to appear in
+Terrance Kelly of Michigan who both gave us very valu-                     5th Int. Conf on Web Caching and Content Delivery Work-
+                                                                           shop, 22 May, Lisbon, Portugal.
+able criticism that improved the presentation and sharp-
+ened our arguments.                                                       http://ai.eecs.umich.edu/~tpkelly/papers/wcp.pdf
+
+
+8. References
+[1] IBM UltraStar72, http://www.storage.ibm.com/ hard-
+      soft/diskdrdl/ultra/72zxdata.htm.
+[2] Brewster Kahle, private communication, http://archive.org
+[3] Data heat is the number of times the data is accessed per
+      second.
+[4] Dell tpcC: http://www.tpc.org/results/individual_results
+      /Dell/ dell_8450_99112201_es.pdf
+[5] HP tpcH: http://www.tpc.org/new_result/h-
+      result1.idc?id=100021501
+[6] J. L. Hennessy, D.A. Patterson, Computer Architecture, a
+      Quantitative Approach. Morgan Kaufman, San Francisco,
+      1990, ISBN 1-55860-069-8
+[7] K. Keeton, D. A. Patterson, Y. Q. He, R. C. Raphael, W. E.
+      Baker, “Performance Characterization Of A Quad Pentium
+      Pro SM P Using OLTP Workloads,” ACM ISCA p. 15-26.
+      June 1998.
+[8] A. Ailamaki, D. J. DeWitt, M. D. Hill, D. A. Wood.
+      “DBMSs On A Modern Processor: Where Does Time Go?”
+      VLDB 99, pp. 266-277, Sept 1999.
+[9] H. Garcia-Molina, A. Park, L.R. Rogers: “Performance
+      Through Memory.” ACM SIGMETRICS, Performance
+      Evaluation Review 15(1), May 1987. pp. 122-131.
+[10] Hsu, W.H., Smith, A.J., Young, H.C., “I/O Reference Be-
+      havior of Production Database Workloads and the TPC
+      Benchmarks -- An Analysis at the Logical Level.” TR
+      UCC/CSD-99-1071, UC Berkeley, Nov. 1999.
+[11] J. Gray, “The Cost of Messages,” ACM PODC, 1988, p1-7
+[12] Virtual Interface Architecture: http: //www.viarch.org
+[13] G. Gilder, “Fiber Keeps Its Promise: Get ready. Bandwidt h
+      will triple each year for the next 25.” Forbes, 7 April 1997.
+      http://www.forbes.com/asap/97/0407/090.htm
+[14] A. M. Odlyzko “The Economics of the Internet: Utility,
+      Utilization, Pricing, and Quality of Service,
+      http://www.research.att.com/~amo/doc/networks.html
+
+
+
+
+                                                                                                                                    8
+
